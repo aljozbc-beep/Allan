@@ -1,0 +1,49 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /duels/{code} {
+      function signed() { return request.auth != null; }
+      function member() { return signed() && (request.auth.uid == resource.data.host || request.auth.uid == resource.data.guest); }
+      function changes() { return request.resource.data.diff(resource.data).affectedKeys(); }
+      function validScore(uid) { return request.resource.data.scores[uid] is int && request.resource.data.scores[uid] >= resource.data.scores[uid] && request.resource.data.scores[uid] <= resource.data.scores[uid] + 1; }
+      allow get: if signed(); // Code is a shared access token; avoid sensitive data in duel documents.
+      allow list: if false;
+      allow create: if signed()
+        && request.resource.data.keys().hasOnly(['host','guest','names','index','answers','scores','createdAt'])
+        && request.resource.data.host == request.auth.uid
+        && request.resource.data.guest == null
+        && request.resource.data.index == 0
+        && request.resource.data.answers == {}
+        && request.resource.data.names.keys().hasOnly([request.auth.uid])
+        && request.resource.data.scores.keys().hasOnly([request.auth.uid])
+        && request.resource.data.scores[request.auth.uid] == 0;
+      allow update: if signed() && (
+        (resource.data.guest == null && request.auth.uid != resource.data.host
+          && changes().hasOnly(['guest','names','scores'])
+          && request.resource.data.guest == request.auth.uid
+          && request.resource.data.names.diff(resource.data.names).affectedKeys().hasOnly([request.auth.uid])
+          && request.resource.data.scores.diff(resource.data.scores).affectedKeys().hasOnly([request.auth.uid])
+          && request.resource.data.scores[request.auth.uid] == 0)
+        ||
+        (member() && resource.data.guest != null
+          && changes().hasOnly(['answers','scores'])
+          && !(request.auth.uid in resource.data.answers)
+          && request.resource.data.answers.diff(resource.data.answers).affectedKeys().hasOnly([request.auth.uid])
+          && request.resource.data.answers[request.auth.uid] is int
+          && request.resource.data.answers[request.auth.uid] >= 0
+          && request.resource.data.answers[request.auth.uid] <= 3
+          && request.resource.data.scores.diff(resource.data.scores).affectedKeys().hasOnly([request.auth.uid])
+          && validScore(request.auth.uid))
+        ||
+        (member() && request.auth.uid == resource.data.host
+          && resource.data.guest != null
+          && resource.data.answers.keys().hasAll([resource.data.host,resource.data.guest])
+          && changes().hasOnly(['index','answers'])
+          && request.resource.data.index == resource.data.index + 1
+          && request.resource.data.index <= 16
+          && request.resource.data.answers == {})
+      );
+      allow delete: if false;
+    }
+  }
+}
